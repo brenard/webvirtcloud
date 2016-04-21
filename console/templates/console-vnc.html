@@ -7,6 +7,14 @@
 {% endblock %}
 
 {% block navbarmenu %}
+                <li class="dropdown" id="xvpMenu" style="display: none;">
+                  <a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-expanded="false">Power control <span class="caret"></span></a>
+                  <ul class="dropdown-menu" role="menu">
+                      <li onclick='xvpShutdown();'><a href='#'>Shutdown</a></li>
+                      <li onclick='xvpReboot();'><a href='#'>Reboot</a></li>
+                      <li onclick='xvpReset();'><a href='#'>Reset</a></li>
+                  </ul>
+                </li>
                 <!-- dirty fix for keyboard on iOS devices -->
                 <li id="showKeyboard"><a href='#'>{% trans "Show Keyboad" %}</a></li>
 {% endblock %}
@@ -42,11 +50,32 @@
     var isTouchDevice = false;
     isTouchDevice = 'ontouchstart' in document.documentElement;
 
+
     // Load supporting scripts
+    var INCLUDE_URI='/static/js/novnc/';
     Util.load_scripts(["webutil.js", "base64.js", "websock.js", "des.js",
-        "input.js", "display.js", "jsunzip.js", "rfb.js"]);
+                       "keysymdef.js", "keyboard.js", "input.js", "display.js",
+                       "inflator.js", "rfb.js", "keysym.js"]);
 
     var rfb;
+    var resizeTimeout;
+
+
+    function UIresize() {
+        console.log('resize');
+        var innerW = window.innerWidth;
+        var innerH = window.innerHeight;
+        var controlbarH = $('nav').height();
+        var padding = 5;
+        console.log('resize => W:'+innerW+' / H:'+(innerH - controlbarH - padding));
+        if (innerW !== undefined && innerH !== undefined)
+            rfb.setDesktopSize(innerW, innerH - controlbarH - padding);
+    }
+    function FBUComplete(rfb, fbu) {
+        UIresize();
+        rfb.set_onFBUComplete(function() { });
+    }
+
 
     function passwordRequired(rfb) {
         var modal;
@@ -95,6 +124,20 @@
         rfb.sendKey(0xFFE3, 'up');
     };
 
+    function xvpShutdown() {
+        rfb.xvpShutdown();
+        return false;
+    }
+    function xvpReboot() {
+        rfb.xvpReboot();
+        return false;
+    }
+    function xvpReset() {
+        rfb.xvpReset();
+        return false;
+    }
+
+
     // dirty fix for keyboard on iOS devices
     function showKeyboard() {
         var kbi, skb, l;
@@ -142,8 +185,32 @@
                 break;
         }
 
+        if (state !== "normal") {
+            xvpInit(0);
+        }
+
         if (typeof(msg) !== 'undefined') {
             log_message(msg,level);
+        }
+    }
+
+    window.onresize = function () {
+        // When the window has been resized, wait until the size remains
+        // the same for 0.5 seconds before sending the request for changing
+        // the resolution of the session
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(function(){
+            UIresize();
+        }, 500);
+    };
+
+    function xvpInit(ver) {
+        var xvpMenu;
+        xvpMenu = $('#xvpMenu');
+        if (ver >= 1) {
+            xvpMenu.css('display','block');
+        } else {
+            xvpMenu.css('display','none');
         }
     }
 
@@ -182,22 +249,30 @@
         password = '{{ console_passwd }}';
 
         if ((!host) || (!port)) {
-            updateState('failed',
+            updateState(null, 'fatal', null,
                     "Must specify host and port in URL");
             return;
         }
 
-        rfb = new RFB({'target': document.getElementById('noVNC_canvas'),
-            'encrypt': WebUtil.getQueryVar('encrypt',
-                    (window.location.protocol === "https:")),
-            'repeaterID': WebUtil.getQueryVar('repeaterID', ''),
-            'true_color': WebUtil.getQueryVar('true_color', true),
-            'local_cursor': WebUtil.getQueryVar('cursor', true),
-            'shared': WebUtil.getQueryVar('shared', true),
-            'view_only': WebUtil.getQueryVar('view_only', false),
-            'updateState': updateState,
-            'onPasswordRequired': passwordRequired});
+        try {
+            rfb = new RFB({'target': document.getElementById('noVNC_canvas'),
+                'encrypt': WebUtil.getQueryVar('encrypt',
+                        (window.location.protocol === "https:")),
+                'repeaterID': WebUtil.getQueryVar('repeaterID', ''),
+                'true_color': WebUtil.getQueryVar('true_color', true),
+                'local_cursor': WebUtil.getQueryVar('cursor', true),
+                'shared': WebUtil.getQueryVar('shared', true),
+                'view_only': WebUtil.getQueryVar('view_only', false),
+                'updateState': updateState,
+                'onXvpInit':    xvpInit,
+                'onPasswordRequired': passwordRequired,
+                'onFBUComplete': FBUComplete});
+        } catch (exc) {
+            updateState(null, 'fatal', null, 'Unable to create RFB client -- ' + exc);
+            return; // don't continue trying to connect
+        }
         rfb.connect(host, port, password, path);
+        
     };
 </script>
 {% endblock %}
